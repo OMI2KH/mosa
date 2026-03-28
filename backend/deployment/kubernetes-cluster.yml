@@ -1,0 +1,1157 @@
+# deployment/kubernetes-cluster.yml
+
+---
+# 🚀 MOSA FORGE ENTERPRISE KUBERNETES PRODUCTION CLUSTER
+# Production-ready Kubernetes configuration for Mosa Forge Enterprise
+# Features: High availability, auto-scaling, monitoring, security, Ethiopian compliance
+#
+# Author: Oumer Muktar
+# Powered By: Chereka
+# Cluster: Production Enterprise Grade
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mosa-forge-production
+  labels:
+    name: mosa-forge-production
+    environment: production
+    platform: mosa-forge
+    powered-by: chereka
+---
+# 🔐 CONFIGMAPS & SECRETS
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mosa-forge-config
+  namespace: mosa-forge-production
+  labels:
+    app: mosa-forge
+    tier: configuration
+data:
+  # 🌍 PLATFORM CONFIGURATION
+  NODE_ENV: "production"
+  PLATFORM_REGION: "ethiopia-east"
+  DATA_SOVEREIGNTY: "ethiopia"
+  
+  # 💰 PAYMENT CONFIGURATION
+  BUNDLE_PRICE: "1999"
+  REVENUE_SPLIT_MOSA: "1000"
+  REVENUE_SPLIT_EXPERT: "999"
+  PAYOUT_SCHEDULE: "333-333-333"
+  
+  # 🛡️ QUALITY CONFIGURATION
+  QUALITY_THRESHOLD_MASTER: "4.7"
+  QUALITY_THRESHOLD_SENIOR: "4.3"
+  QUALITY_THRESHOLD_STANDARD: "4.0"
+  AUTO_ENFORCEMENT_ENABLED: "true"
+  
+  # 📊 PERFORMANCE CONFIGURATION
+  RATE_LIMIT_REQUESTS: "1000"
+  RATE_LIMIT_WINDOW: "900"
+  CACHE_TTL: "3600"
+  SESSION_TIMEOUT: "7200"
+  
+  # 🔐 SECURITY CONFIGURATION
+  PASSWORD_MIN_LENGTH: "8"
+  MAX_LOGIN_ATTEMPTS: "5"
+  JWT_EXPIRY: "24h"
+  OTP_VALIDITY: "300"
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: mosa-forge-secrets
+  namespace: mosa-forge-production
+  labels:
+    app: mosa-forge
+    tier: secrets
+type: Opaque
+data:
+  # 🔐 DATABASE SECRETS
+  postgres-password: "cHJvZHVjdGlvbl9zdXBlcl9zZWNyZXRfcGFzc3dvcmQ="
+  redis-password: "cmVkaXNfcHJvZHVjdGlvbl9wYXNzd29yZA=="
+  
+  # 🔐 PAYMENT GATEWAY SECRETS
+  telebirr-api-key: "dGVsZWJpcnJfcHJvZHVjdGlvbl9hcGlfa2V5"
+  cbebirr-api-key: "Y2JlYmlycl9wcm9kdWN0aW9uX2FwaV9rZXk="
+  fayda-api-secret: "ZmF5ZGFfZ292ZXJubWVudF9hcGlfc2VjcmV0"
+  
+  # 🔐 JWT SECRETS
+  jwt-secret: "c3VwZXJfc2VjdXJlX2p3dF9wcm9kdWN0aW9uX3NlY3JldA=="
+  refresh-secret: "c3VwZXJfc2VjdXJlX3JlZnJlc2hfc2VjcmV0"
+  
+  # 🔐 THIRD-PARTY INTEGRATIONS
+  yachi-api-key: "eWFjaGlfcGxhdGZvcm1faW50ZWdyYXRpb25fa2V5"
+  twilio-auth-token: "dHdpbGlvX3Ntc19hdXRoX3Rva2Vu"
+  sendgrid-api-key: "c2VuZGdyaWRfZW1haWxfYXBpX2tleQ=="
+
+---
+# 🗃️ POSTGRESQL DATABASE CLUSTER
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgresql-cluster
+  namespace: mosa-forge-production
+  labels:
+    app: postgresql
+    tier: database
+    component: primary
+spec:
+  serviceName: postgresql
+  replicas: 3
+  selector:
+    matchLabels:
+      app: postgresql
+      tier: database
+  template:
+    metadata:
+      labels:
+        app: postgresql
+        tier: database
+        component: primary
+    spec:
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+              - key: app
+                operator: In
+                values:
+                - postgresql
+            topologyKey: "kubernetes.io/hostname"
+      containers:
+      - name: postgresql
+        image: postgres:15-alpine
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 5432
+          name: postgresql
+        env:
+        - name: POSTGRES_DB
+          value: "mosa_forge_enterprise"
+        - name: POSTGRES_USER
+          value: "mosa_forge_admin"
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mosa-forge-secrets
+              key: postgres-password
+        - name: PGDATA
+          value: "/var/lib/postgresql/data/pgdata"
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "1000m"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"
+        volumeMounts:
+        - name: postgresql-data
+          mountPath: /var/lib/postgresql/data
+        - name: postgresql-config
+          mountPath: /docker-entrypoint-initdb.d
+        livenessProbe:
+          exec:
+            command:
+            - sh
+            - -c
+            - exec pg_isready -h 127.0.0.1 -U $POSTGRES_USER
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+        readinessProbe:
+          exec:
+            command:
+            - sh
+            - -c
+            - exec pg_isready -h 127.0.0.1 -U $POSTGRES_USER
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+      volumes:
+      - name: postgresql-config
+        configMap:
+          name: postgresql-init-config
+      securityContext:
+        fsGroup: 999
+  volumeClaimTemplates:
+  - metadata:
+      name: postgresql-data
+    spec:
+      accessModes:
+      - ReadWriteOnce
+      storageClassName: fast-ssd
+      resources:
+        requests:
+          storage: 100Gi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgresql-service
+  namespace: mosa-forge-production
+  labels:
+    app: postgresql
+    tier: database
+spec:
+  clusterIP: None
+  ports:
+  - port: 5432
+    targetPort: 5432
+  selector:
+    app: postgresql
+    tier: database
+
+---
+# 🔥 REDIS CLUSTER
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis-cluster
+  namespace: mosa-forge-production
+  labels:
+    app: redis
+    tier: cache
+spec:
+  serviceName: redis
+  replicas: 3
+  selector:
+    matchLabels:
+      app: redis
+      tier: cache
+  template:
+    metadata:
+      labels:
+        app: redis
+        tier: cache
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - redis
+              topologyKey: kubernetes.io/hostname
+      containers:
+      - name: redis
+        image: redis:7-alpine
+        command:
+        - redis-server
+        - "/etc/redis/redis.conf"
+        - "--cluster-enabled"
+        - "yes"
+        - "--cluster-config-file"
+        - "nodes.conf"
+        - "--cluster-node-timeout"
+        - "5000"
+        - "--appendonly"
+        - "yes"
+        - "--requirepass"
+        - "/etc/redis/password"
+        ports:
+        - containerPort: 6379
+          name: client
+        - containerPort: 16379
+          name: gossip
+        volumeMounts:
+        - name: redis-config
+          mountPath: /etc/redis
+        - name: redis-data
+          mountPath: /data
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+        livenessProbe:
+          exec:
+            command:
+            - redis-cli
+            - ping
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          exec:
+            command:
+            - redis-cli
+            - ping
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      volumes:
+      - name: redis-config
+        secret:
+          secretName: redis-config-secret
+  volumeClaimTemplates:
+  - metadata:
+      name: redis-data
+    spec:
+      accessModes:
+      - ReadWriteOnce
+      storageClassName: fast-ssd
+      resources:
+        requests:
+          storage: 50Gi
+
+---
+# 🚀 API GATEWAY DEPLOYMENT
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-gateway
+  namespace: mosa-forge-production
+  labels:
+    app: api-gateway
+    tier: backend
+    microservice: gateway
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: api-gateway
+      tier: backend
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: api-gateway
+        tier: backend
+        microservice: gateway
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "3000"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+      - name: api-gateway
+        image: mosaforge/api-gateway:enterprise-v1.0.0
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 3000
+          name: http
+        - containerPort: 3001
+          name: metrics
+        env:
+        - name: NODE_ENV
+          valueFrom:
+            configMapKeyRef:
+              name: mosa-forge-config
+              key: NODE_ENV
+        - name: PORT
+          value: "3000"
+        - name: REDIS_URL
+          value: "redis://redis-service:6379"
+        - name: DATABASE_URL
+          value: "postgresql://mosa_forge_admin@postgresql-service:5432/mosa_forge_enterprise"
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: http
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+        startupProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          failureThreshold: 10
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          allowPrivilegeEscalation: false
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: api-gateway-hpa
+  namespace: mosa-forge-production
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: api-gateway
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 50
+        periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 30
+
+---
+# 🔐 AUTH SERVICE DEPLOYMENT
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth-service
+  namespace: mosa-forge-production
+  labels:
+    app: auth-service
+    tier: backend
+    microservice: auth
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: auth-service
+      tier: backend
+  template:
+    metadata:
+      labels:
+        app: auth-service
+        tier: backend
+        microservice: auth
+    spec:
+      containers:
+      - name: auth-service
+        image: mosaforge/auth-service:enterprise-v1.0.0
+        ports:
+        - containerPort: 3002
+          name: http
+        env:
+        - name: FAYDA_API_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: mosa-forge-secrets
+              key: fayda-api-secret
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: mosa-forge-secrets
+              key: jwt-secret
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 30
+          periodSeconds: 10
+
+---
+# 💰 PAYMENT SERVICE DEPLOYMENT
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: payment-service
+  namespace: mosa-forge-production
+  labels:
+    app: payment-service
+    tier: backend
+    microservice: payment
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: payment-service
+      tier: backend
+  template:
+    metadata:
+      labels:
+        app: payment-service
+        tier: backend
+        microservice: payment
+    spec:
+      containers:
+      - name: payment-service
+        image: mosaforge/payment-service:enterprise-v1.0.0
+        ports:
+        - containerPort: 3003
+          name: http
+        env:
+        - name: TELEBIRR_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: mosa-forge-secrets
+              key: telebirr-api-key
+        - name: CBE_BIRR_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: mosa-forge-secrets
+              key: cbebirr-api-key
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+
+---
+# 🎓 STUDENT SERVICE DEPLOYMENT
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: student-service
+  namespace: mosa-forge-production
+  labels:
+    app: student-service
+    tier: backend
+    microservice: student
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: student-service
+      tier: backend
+  template:
+    metadata:
+      labels:
+        app: student-service
+        tier: backend
+        microservice: student
+    spec:
+      containers:
+      - name: student-service
+        image: mosaforge/student-service:enterprise-v1.0.0
+        ports:
+        - containerPort: 3004
+          name: http
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+
+---
+# 👨‍🏫 EXPERT SERVICE DEPLOYMENT
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: expert-service
+  namespace: mosa-forge-production
+  labels:
+    app: expert-service
+    tier: backend
+    microservice: expert
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: expert-service
+      tier: backend
+  template:
+    metadata:
+      labels:
+        app: expert-service
+        tier: backend
+        microservice: expert
+    spec:
+      containers:
+      - name: expert-service
+        image: mosaforge/expert-service:enterprise-v1.0.0
+        ports:
+        - containerPort: 3005
+          name: http
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+
+---
+# 🛡️ QUALITY SERVICE DEPLOYMENT
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: quality-service
+  namespace: mosa-forge-production
+  labels:
+    app: quality-service
+    tier: backend
+    microservice: quality
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: quality-service
+      tier: backend
+  template:
+    metadata:
+      labels:
+        app: quality-service
+        tier: backend
+        microservice: quality
+    spec:
+      containers:
+      - name: quality-service
+        image: mosaforge/quality-service:enterprise-v1.0.0
+        ports:
+        - containerPort: 3006
+          name: http
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+
+---
+# 📚 LEARNING SERVICE DEPLOYMENT
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: learning-service
+  namespace: mosa-forge-production
+  labels:
+    app: learning-service
+    tier: backend
+    microservice: learning
+spec:
+  replicas: 4
+  selector:
+    matchLabels:
+      app: learning-service
+      tier: backend
+  template:
+    metadata:
+      labels:
+        app: learning-service
+        tier: backend
+        microservice: learning
+    spec:
+      containers:
+      - name: learning-service
+        image: mosaforge/learning-service:enterprise-v1.0.0
+        ports:
+        - containerPort: 3007
+          name: http
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "1000m"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"
+
+---
+# 🏋️ TRAINING SERVICE DEPLOYMENT
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: training-service
+  namespace: mosa-forge-production
+  labels:
+    app: training-service
+    tier: backend
+    microservice: training
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: training-service
+      tier: backend
+  template:
+    metadata:
+      labels:
+        app: training-service
+        tier: backend
+        microservice: training
+    spec:
+      containers:
+      - name: training-service
+        image: mosaforge/training-service:enterprise-v1.0.0
+        ports:
+        - containerPort: 3008
+          name: http
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+
+---
+# 🏆 CERTIFICATION SERVICE DEPLOYMENT
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: certification-service
+  namespace: mosa-forge-production
+  labels:
+    app: certification-service
+    tier: backend
+    microservice: certification
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: certification-service
+      tier: backend
+  template:
+    metadata:
+      labels:
+        app: certification-service
+        tier: backend
+        microservice: certification
+    spec:
+      containers:
+      - name: certification-service
+        image: mosaforge/certification-service:enterprise-v1.0.0
+        ports:
+        - containerPort: 3009
+          name: http
+        env:
+        - name: YACHI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: mosa-forge-secrets
+              key: yachi-api-key
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+
+---
+# 📊 ANALYTICS SERVICE DEPLOYMENT
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: analytics-service
+  namespace: mosa-forge-production
+  labels:
+    app: analytics-service
+    tier: backend
+    microservice: analytics
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: analytics-service
+      tier: backend
+  template:
+    metadata:
+      labels:
+        app: analytics-service
+        tier: backend
+        microservice: analytics
+    spec:
+      containers:
+      - name: analytics-service
+        image: mosaforge/analytics-service:enterprise-v1.0.0
+        ports:
+        - containerPort: 3010
+          name: http
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "1000m"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"
+
+---
+# 🌐 INGRESS CONTROLLER & LOAD BALANCER
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: mosa-forge-ingress
+  namespace: mosa-forge-production
+  annotations:
+    kubernetes.io/ingress.class: "nginx"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "30"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "1800"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "1800"
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+    nginx.ingress.kubernetes.io/cors-allow-methods: "PUT, GET, POST, OPTIONS, DELETE"
+    nginx.ingress.kubernetes.io/cors-allow-origin: "*"
+    cert-manager.io/cluster-issuer: "letsencrypt-production"
+spec:
+  tls:
+  - hosts:
+    - api.mosaforge.com
+    - admin.mosaforge.com
+    - metrics.mosaforge.com
+    secretName: mosa-forge-tls
+  rules:
+  - host: api.mosaforge.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: api-gateway-service
+            port:
+              number: 3000
+  - host: admin.mosaforge.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: admin-dashboard-service
+            port:
+              number: 8080
+  - host: metrics.mosaforge.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: grafana-service
+            port:
+              number: 3000
+
+---
+# 📊 MONITORING STACK
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus-deployment
+  namespace: mosa-forge-production
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prometheus
+  template:
+    metadata:
+      labels:
+        app: prometheus
+    spec:
+      containers:
+      - name: prometheus
+        image: prom/prometheus:v2.45.0
+        ports:
+        - containerPort: 9090
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "500m"
+          limits:
+            memory: "4Gi"
+            cpu: "1000m"
+        volumeMounts:
+        - name: prometheus-config
+          mountPath: /etc/prometheus/
+        - name: prometheus-storage
+          mountPath: /prometheus
+      volumes:
+      - name: prometheus-config
+        configMap:
+          name: prometheus-config
+      - name: prometheus-storage
+        persistentVolumeClaim:
+          claimName: prometheus-pvc
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana-deployment
+  namespace: mosa-forge-production
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      labels:
+        app: grafana
+    spec:
+      containers:
+      - name: grafana
+        image: grafana/grafana:10.0.0
+        ports:
+        - containerPort: 3000
+        env:
+        - name: GF_SECURITY_ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: grafana-secrets
+              key: admin-password
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        volumeMounts:
+        - name: grafana-storage
+          mountPath: /var/lib/grafana
+        - name: grafana-dashboards
+          mountPath: /etc/grafana/provisioning/dashboards
+      volumes:
+      - name: grafana-storage
+        persistentVolumeClaim:
+          claimName: grafana-pvc
+      - name: grafana-dashboards
+        configMap:
+          name: grafana-dashboards
+
+---
+# 🔧 SERVICE MESH CONFIGURATION
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: mosa-forge-virtual-service
+  namespace: mosa-forge-production
+spec:
+  hosts:
+  - "api.mosaforge.com"
+  gateways:
+  - mosa-forge-gateway
+  http:
+  - match:
+    - uri:
+        prefix: "/api/v1/auth"
+    route:
+    - destination:
+        host: auth-service
+        port:
+          number: 3002
+    timeout: 30s
+    retries:
+      attempts: 3
+      perTryTimeout: 2s
+  - match:
+    - uri:
+        prefix: "/api/v1/payments"
+    route:
+    - destination:
+        host: payment-service
+        port:
+          number: 3003
+    timeout: 60s
+  - match:
+    - uri:
+        prefix: "/api/v1/students"
+    route:
+    - destination:
+        host: student-service
+        port:
+          number: 3004
+
+---
+# 🗄️ STORAGE CLASSES
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: fast-ssd
+  annotations:
+    storageclass.kubernetes.io/is-default-class: "true"
+provisioner: kubernetes.io/aws-ebs
+parameters:
+  type: gp3
+  iops: "3000"
+  throughput: "125"
+  encrypted: "true"
+reclaimPolicy: Retain
+allowVolumeExpansion: true
+volumeBindingMode: WaitForFirstConsumer
+
+---
+# 🔐 NETWORK POLICIES
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-all
+  namespace: mosa-forge-production
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-api-communication
+  namespace: mosa-forge-production
+spec:
+  podSelector:
+    matchLabels:
+      tier: backend
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: api-gateway
+    ports:
+    - protocol: TCP
+      port: 3000
+  egress:
+  - to:
+    - podSelector:
+        matchLabels:
+          app: postgresql
+    ports:
+    - protocol: TCP
+      port: 5432
+  - to:
+    - podSelector:
+        matchLabels:
+          app: redis
+    ports:
+    - protocol: TCP
+      port: 6379
+
+---
+# 📈 VERTICAL POD AUTOSCALER
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: api-gateway-vpa
+  namespace: mosa-forge-production
+spec:
+  targetRef:
+    apiVersion: "apps/v1"
+    kind: Deployment
+    name: api-gateway
+  updatePolicy:
+    updateMode: "Auto"
+
+---
+# 🎯 CLUSTER AUTOSCALER
+apiVersion: autoscaling.k8s.io/v1
+kind: ClusterAutoscaler
+metadata:
+  name: cluster-autoscaler
+  namespace: kube-system
+spec:
+  scaleDownDelayAfterAdd: "10m"
+  scaleDownUnneededTime: "5m"
+  scaleDownUtilizationThreshold: "0.5"
+  maxNodeProvisionTime: "15m"
+  resourceLimits:
+    maxNodes: 50
+    minNodes: 3
+    cores:
+      min: 16
+      max: 200
+    memory:
+      min: 64
+      max: 800
+
+---
+# 🔔 ALERT MANAGER
+apiVersion: monitoring.coreos.com/v1
+kind: Alertmanager
+metadata:
+  name: mosa-forge-alertmanager
+  namespace: mosa-forge-production
+spec:
+  replicas: 2
+  resources:
+    requests:
+      memory: 400Mi
+    limits:
+      memory: 600Mi
+  alertmanagerConfigSelector:
+    matchLabels:
+      alertmanager: mosa-forge
+
+---
+# 💾 BACKUP CONFIGURATION
+apiVersion: velero.io/v1
+kind: Schedule
+metadata:
+  name: daily-backup
+  namespace: mosa-forge-production
+spec:
+  schedule: "0 2 * * *"
+  template:
+    includedNamespaces:
+    - mosa-forge-production
+    excludedResources:
+    - nodes
+    - events
+    - events.events.k8s.io
+    - backups.velero.io
+    - restores.velero.io
+    ttl: 720h0m0s
+
+---
+# 🏷️ FINAL CLUSTER LABELS
+apiVersion: meta.k8s.io/v1
+kind: Table
+metadata:
+  name: cluster-info
+  labels:
+    platform: mosa-forge
+    environment: production
+    region: ethiopia-east
+    compliance: ethiopian-data
+    powered-by: chereka
+    founder: oumer-muktar
+    version: enterprise-1.0.0
+    deployment-date: "2024-10-01"
+    sla: "99.9%"
+    support-tier: enterprise-24x7

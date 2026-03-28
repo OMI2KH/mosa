@@ -1,0 +1,116 @@
+{
+  "expo": {
+    "name": "Mosa Forge",
+    "slug": "mosa-forge",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#D4A017"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.hayatgrid.mosa",
+      "buildNumber": "1",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "Mosa uses your location to connect you with local tribes and service opportunities in your area.",
+        "NSLocationAlwaysUsageDescription": "Mosa uses your location to provide personalized wealth-building opportunities near you.",
+        "NSUserTrackingUsageDescription": "Mosa uses app tracking to improve your learning experience and show relevant opportunities."
+      },
+      "config": {
+        "usesNonExemptEncryption": false
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#D4A017"
+      },
+      "package": "com.hayatgrid.mosa",
+      "versionCode": 1,
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.VIBRATE",
+        "android.permission.RECORD_AUDIO"
+      ],
+      "config": {
+        "googleMaps": {
+          "apiKey": "YOUR_GOOGLE_MAPS_API_KEY"
+        }
+      }
+    },
+    "web": {
+      "favicon": "./assets/favicon.png",
+      "name": "Mosa Forge - Wealth Building Platform",
+      "shortName": "Mosa",
+      "lang": "en",
+      "scope": "/",
+      "themeColor": "#2D5016",
+      "backgroundColor": "#F8F9FA",
+      "display": "standalone",
+      "orientation": "portrait"
+    },
+    "extra": {
+      "apiUrl": "http://localhost:5001/api",
+      "subPrice": 49,
+      "environment": "development",
+      "mosa": {
+        "appId": "mosa-forge-v1",
+        "venture": "mosa",
+        "unlockYachiAtXP": 500,
+        "unlockCherekaAtXP": 1000,
+        "unlockSifrAtXP": 2000,
+        "dailyGoalXP": 50,
+        "streakRewardMultiplier": 1.5
+      },
+      "eas": {
+        "projectId": "your-eas-project-id"
+      }
+    },
+    "plugins": [
+      "expo-location",
+      "expo-notifications",
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "useFrameworks": "static"
+          }
+        }
+      ],
+      [
+        "expo-font",
+        {
+          "fonts": [
+            "node_modules/@expo-google-fonts/inter/Inter_400Regular.ttf",
+            "node_modules/@expo-google-fonts/inter/Inter_600SemiBold.ttf",
+            "node_modules/@expo-google-fonts/inter/Inter_700Bold.ttf"
+          ]
+        }
+      ]
+    ],
+    "runtimeVersion": {
+      "policy": "sdkVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/your-project-id",
+      "fallbackToCacheTimeout": 0
+    },
+    "newArchEnabled": false,
+    "scheme": "mosaforge",
+    "privacy": "unlisted",
+    "description": "Mosa - Your wealth-building journey starts here. Learn practical skills, earn XP, and unlock new ventures in the Hayat Grid ecosystem.",
+    "githubUrl": "https://github.com/your-username/mosa-forge",
+    "primaryColor": "#2D5016"
+  }
+}

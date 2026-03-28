@@ -1,0 +1,14 @@
+/** @type {import('tailwindcss').Config} */
+module.exports = {
+  content: ["./src/**/*.{js,jsx,ts,tsx}"],
+  theme: {
+    extend: {
+      colors: {
+        primary: '#D4A017', // Gold for Ethiopian fire
+        secondary: '#2D5016', // Green for growth
+        accent: '#8B0000' // Red for passion
+      }
+    }
+  },
+  plugins: []
+};

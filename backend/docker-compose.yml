@@ -1,0 +1,47 @@
+version: '3.8'
+
+services:
+  # ==========================
+  # 🗃️ PostgreSQL Database
+  # ==========================
+  db:
+    image: postgres:16
+    container_name: mosa_db
+    restart: always
+    environment:
+      POSTGRES_DB: mosa
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: pass
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d mosa"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ==========================
+  # ⚙️ Node.js Backend
+  # ==========================
+  backend:
+    build: .
+    container_name: mosa_backend
+    restart: always
+    ports:
+      - "5001:5001"
+    env_file:
+      - .env
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - .:/app
+      - /app/node_modules
+    command: >
+      sh -c "npx prisma migrate deploy &&
+             npm run start"  # You can change this to npm run dev if using nodemon
+
+volumes:
+  postgres_data:

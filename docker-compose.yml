@@ -1,0 +1,540 @@
+# docker-compose.yml
+# 🚀 MOSA FORGE ENTERPRISE - PRODUCTION READY DOCKER COMPOSE
+# Microservices Orchestration for Local Development & Staging
+# Powered by Chereka | Founded by Oumer Muktar
+
+version: '3.8'
+
+x-common-variables: &common-vars
+  NODE_ENV: development
+  LOG_LEVEL: info
+  TZ: Africa/Addis_Ababa
+  DATABASE_URL: postgresql://mosa_forge:${DB_PASSWORD:-mosa123}@postgres:5432/mosa_forge_enterprise
+  REDIS_URL: redis://redis:6379
+  JWT_SECRET: ${JWT_SECRET:-mosa_forge_enterprise_jwt_secret_2024}
+  FAYDA_API_URL: ${FAYDA_API_URL:-https://api.fayda.gov.et/v1}
+  TELEBIRR_MERCHANT_ID: ${TELEBIRR_MERCHANT_ID}
+  CBE_BIRR_MERCHANT_ID: ${CBE_BIRR_MERCHANT_ID}
+  YACHI_API_KEY: ${YACHI_API_KEY}
+
+services:
+  # 🗃️ PRIMARY DATABASE - PostgreSQL with Performance Optimizations
+  postgres:
+    image: postgres:15-alpine
+    container_name: mosa_forge_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: mosa_forge_enterprise
+      POSTGRES_USER: mosa_forge
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-mosa123}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./deployment/sql/init:/docker-entrypoint-initdb.d
+    ports:
+      - "5432:5432"
+    networks:
+      - mosa_forge_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mosa_forge -d mosa_forge_enterprise"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    command: >
+      postgres
+      -c shared_preload_libraries=pg_stat_statements
+      -c pg_stat_statements.track=all
+      -c max_connections=200
+      -c shared_buffers=256MB
+      -c effective_cache_size=1GB
+      -c maintenance_work_mem=64MB
+      -c checkpoint_completion_target=0.9
+      -c wal_buffers=16MB
+      -c default_statistics_target=100
+
+  # 🔥 REDIS - Caching & Session Storage
+  redis:
+    image: redis:7-alpine
+    container_name: mosa_forge_redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-redis123}
+    volumes:
+      - redis_data:/data
+      - ./deployment/redis/redis.conf:/etc/redis/redis.conf
+    ports:
+      - "6379:6379"
+    networks:
+      - mosa_forge_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # 🚀 API GATEWAY - Entry Point for All Microservices
+  api-gateway:
+    build:
+      context: ./api-gateway
+      dockerfile: Dockerfile.dev
+    container_name: mosa_forge_api_gateway
+    restart: unless-stopped
+    environment:
+      <<: *common-vars
+      PORT: 3000
+      AUTH_SERVICE_URL: http://auth-service:3001
+      PAYMENT_SERVICE_URL: http://payment-service:3002
+      EXPERT_SERVICE_URL: http://expert-service:3003
+      STUDENT_SERVICE_URL: http://student-service:3004
+      QUALITY_SERVICE_URL: http://quality-service:3005
+      LEARNING_SERVICE_URL: http://learning-service:3006
+      TRAINING_SERVICE_URL: http://training-service:3007
+      CERTIFICATION_SERVICE_URL: http://certification-service:3008
+      ANALYTICS_SERVICE_URL: http://analytics-service:3009
+      RATE_LIMIT_WINDOW_MS: 900000
+      RATE_LIMIT_MAX_REQUESTS: 100
+    ports:
+      - "3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - mosa_forge_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    volumes:
+      - /app/node_modules
+      - ./api-gateway:/app
+      - ./deployment/logs:/app/logs
+
+  # 🔐 AUTH SERVICE - Fayda ID & Security
+  auth-service:
+    build:
+      context: ./auth-service
+      dockerfile: Dockerfile.dev
+    container_name: mosa_forge_auth_service
+    restart: unless-stopped
+    environment:
+      <<: *common-vars
+      PORT: 3001
+      FAYDA_API_KEY: ${FAYDA_API_KEY}
+      FAYDA_API_SECRET: ${FAYDA_API_SECRET}
+      OTP_EXPIRY_MINUTES: 10
+      MAX_LOGIN_ATTEMPTS: 5
+      ACCOUNT_LOCKOUT_MINUTES: 30
+    ports:
+      - "3001:3001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - mosa_forge_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    volumes:
+      - /app/node_modules
+      - ./auth-service:/app
+      - ./deployment/logs:/app/logs
+
+  # 💰 PAYMENT SERVICE - Revenue Distribution & Payouts
+  payment-service:
+    build:
+      context: ./payment-service
+      dockerfile: Dockerfile.dev
+    container_name: mosa_forge_payment_service
+    restart: unless-stopped
+    environment:
+      <<: *common-vars
+      PORT: 3002
+      BUNDLE_PRICE: 1999
+      MOSA_REVENUE: 1000
+      EXPERT_REVENUE: 999
+      PAYOUT_SCHEDULE: 333,333,333
+      TELEBIRR_API_URL: ${TELEBIRR_API_URL}
+      TELEBIRR_API_SECRET: ${TELEBIRR_API_SECRET}
+      CBE_BIRR_API_URL: ${CBE_BIRR_API_URL}
+      CBE_BIRR_API_SECRET: ${CBE_BIRR_API_SECRET}
+    ports:
+      - "3002:3002"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - mosa_forge_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    volumes:
+      - /app/node_modules
+      - ./payment-service:/app
+      - ./deployment/logs:/app/logs
+
+  # 👨‍🏫 EXPERT SERVICE - Quality Management & Tier System
+  expert-service:
+    build:
+      context: ./expert-service
+      dockerfile: Dockerfile.dev
+    container_name: mosa_forge_expert_service
+    restart: unless-stopped
+    environment:
+      <<: *common-vars
+      PORT: 3003
+      MASTER_TIER_THRESHOLD: 4.7
+      SENIOR_TIER_THRESHOLD: 4.3
+      STANDARD_TIER_THRESHOLD: 4.0
+      MAX_STUDENTS_MASTER: 0
+      MAX_STUDENTS_SENIOR: 100
+      MAX_STUDENTS_STANDARD: 50
+      QUALITY_BONUS_PERCENTAGE: 20
+    ports:
+      - "3003:3003"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - mosa_forge_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3003/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    volumes:
+      - /app/node_modules
+      - ./expert-service:/app
+      - ./deployment/logs:/app/logs
+
+  # 🎓 STUDENT SERVICE - Journey Management & Progress Tracking
+  student-service:
+    build:
+      context: ./student-service
+      dockerfile: Dockerfile.dev
+    container_name: mosa_forge_student_service
+    restart: unless-stopped
+    environment:
+      <<: *common-vars
+      PORT: 3004
+      MINDSET_PHASE_DURATION: 30
+      THEORY_PHASE_DURATION: 60
+      HANDS_ON_PHASE_DURATION: 60
+      MAX_CONCURRENT_COURSES: 3
+      PROGRESS_UPDATE_INTERVAL: 3600
+    ports:
+      - "3004:3004"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - mosa_forge_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3004/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    volumes:
+      - /app/node_modules
+      - ./student-service:/app
+      - ./deployment/logs:/app/logs
+
+  # 🛡️ QUALITY SERVICE - Real-time Monitoring & Auto-Enforcement
+  quality-service:
+    build:
+      context: ./quality-service
+      dockerfile: Dockerfile.dev
+    container_name: mosa_forge_quality_service
+    restart: unless-stopped
+    environment:
+      <<: *common-vars
+      PORT: 3005
+      QUALITY_CHECK_INTERVAL: 300
+      AUTO_ENFORCEMENT_ENABLED: true
+      MIN_COMPLETION_RATE: 70
+      MIN_AVERAGE_RATING: 4.0
+      MAX_RESPONSE_TIME: 24
+      STUDENT_SATISFACTION_THRESHOLD: 80
+    ports:
+      - "3005:3005"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - mosa_forge_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3005/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    volumes:
+      - /app/node_modules
+      - ./quality-service:/app
+      - ./deployment/logs:/app/logs
+
+  # 📚 LEARNING SERVICE - Duolingo-style Engine
+  learning-service:
+    build:
+      context: ./learning-service
+      dockerfile: Dockerfile.dev
+    container_name: mosa_forge_learning_service
+    restart: unless-stopped
+    environment:
+      <<: *common-vars
+      PORT: 3006
+      EXERCISE_GENERATION_INTERVAL: 3600
+      PROGRESS_TRACKING_ENABLED: true
+      REAL_TIME_CHARTS_ENABLED: true
+      MINDSET_ASSESSMENT_THRESHOLD: 80
+    ports:
+      - "3006:3006"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - mosa_forge_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3006/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    volumes:
+      - /app/node_modules
+      - ./learning-service:/app
+      - ./deployment/logs:/app/logs
+
+  # 🏋️ TRAINING SERVICE - Hands-on Session Management
+  training-service:
+    build:
+      context: ./training-service
+      dockerfile: Dockerfile.dev
+    container_name: mosa_forge_training_service
+    restart: unless-stopped
+    environment:
+      <<: *common-vars
+      PORT: 3007
+      SESSION_DURATION_MINUTES: 120
+      MAX_STUDENTS_PER_SESSION: 5
+      ATTENDANCE_VERIFICATION_ENABLED: true
+      PRACTICAL_WORKSPACE_ENABLED: true
+    ports:
+      - "3007:3007"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - mosa_forge_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3007/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    volumes:
+      - /app/node_modules
+      - ./training-service:/app
+      - ./deployment/logs:/app/logs
+
+  # 🏆 CERTIFICATION SERVICE - Yachi Integration & Verification
+  certification-service:
+    build:
+      context: ./certification-service
+      dockerfile: Dockerfile.dev
+    container_name: mosa_forge_certification_service
+    restart: unless-stopped
+    environment:
+      <<: *common-vars
+      PORT: 3008
+      YACHI_API_URL: ${YACHI_API_URL}
+      YACHI_PROVIDER_ONBOARDING: true
+      CERTIFICATE_VERIFICATION_ENABLED: true
+      EMPLOYER_PORTAL_ENABLED: true
+    ports:
+      - "3008:3008"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - mosa_forge_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3008/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    volumes:
+      - /app/node_modules
+      - ./certification-service:/app
+      - ./deployment/logs:/app/logs
+
+  # 📊 ANALYTICS SERVICE - Business Intelligence
+  analytics-service:
+    build:
+      context: ./analytics-service
+      dockerfile: Dockerfile.dev
+    container_name: mosa_forge_analytics_service
+    restart: unless-stopped
+    environment:
+      <<: *common-vars
+      PORT: 3009
+      ANALYTICS_UPDATE_INTERVAL: 3600
+      REVENUE_TRACKING_ENABLED: true
+      COMPLETION_METRICS_ENABLED: true
+      EXPERT_PERFORMANCE_TRACKING: true
+    ports:
+      - "3009:3009"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - mosa_forge_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3009/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    volumes:
+      - /app/node_modules
+      - ./analytics-service:/app
+      - ./deployment/logs:/app/logs
+
+  # 🔍 MONITORING STACK - Production Grade Observability
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: mosa_forge_prometheus
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./deployment/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    networks:
+      - mosa_forge_network
+    depends_on:
+      - api-gateway
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: mosa_forge_grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin123}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./deployment/monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - ./deployment/monitoring/grafana/datasources:/etc/grafana/provisioning/datasources
+    networks:
+      - mosa_forge_network
+    depends_on:
+      - prometheus
+
+  # 📝 LOG MANAGEMENT - Centralized Logging
+  loki:
+    image: grafana/loki:2.8.0
+    container_name: mosa_forge_loki
+    restart: unless-stopped
+    ports:
+      - "3100:3100"
+    command: -config.file=/etc/loki/local-config.yaml
+    networks:
+      - mosa_forge_network
+
+  promtail:
+    image: grafana/promtail:2.8.0
+    container_name: mosa_forge_promtail
+    restart: unless-stopped
+    volumes:
+      - /var/log:/var/log:ro
+      - ./deployment/logs:/var/log/mosa_forge:ro
+      - ./deployment/monitoring/promtail-config.yml:/etc/promtail/config.yml
+    command: -config.file=/etc/promtail/config.yml
+    networks:
+      - mosa_forge_network
+    depends_on:
+      - loki
+
+  # 🔧 ADMINER - Database Management UI
+  adminer:
+    image: adminer:4.8.1
+    container_name: mosa_forge_adminer
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    networks:
+      - mosa_forge_network
+    depends_on:
+      - postgres
+
+  # 🐛 REDIS INSIGHT - Redis Management UI
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: mosa_forge_redis_commander
+    restart: unless-stopped
+    environment:
+      REDIS_HOSTS: local:redis:6379:0:redis123
+    ports:
+      - "8081:8081"
+    networks:
+      - mosa_forge_network
+    depends_on:
+      - redis
+
+volumes:
+  postgres_data:
+    driver: local
+    driver_opts:
+      type: none
+      device: ./deployment/data/postgres
+      o: bind
+  redis_data:
+    driver: local
+    driver_opts:
+      type: none
+      device: ./deployment/data/redis
+      o: bind
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+
+networks:
+  mosa_forge_network:
+    driver: bridge
+    name: mosa_forge_network
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.20.0.0/16

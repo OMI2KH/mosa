@@ -1,0 +1,1015 @@
+# deployment/monitoring-stack.yml
+
+# 🎯 ENTERPRISE MONITORING STACK
+# Production-ready monitoring infrastructure for Mosa Forge
+# Features: Real-time metrics, alerting, logging, performance monitoring
+#
+# @author Oumer Muktar
+# @poweredby Chereka
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: monitoring-config
+  namespace: mosa-forge-monitoring
+  labels:
+    app: monitoring-stack
+    version: enterprise-1.0
+    platform: mosa-forge
+data:
+  # 🎯 PROMETHEUS CONFIGURATION
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+      external_labels:
+        cluster: 'mosa-forge-enterprise'
+        environment: 'production'
+
+    # 🎯 ALERTING CONFIGURATION
+    alerting:
+      alertmanagers:
+        - static_configs:
+            - targets: ['alertmanager:9093']
+          scheme: http
+          timeout: 10s
+          api_version: v2
+
+    # 🎯 RULE FILES
+    rule_files:
+      - "/etc/prometheus/rules/*.yml"
+
+    # 🎯 SCRAPE CONFIGURATIONS
+    scrape_configs:
+      # 🚀 MICROSERVICES MONITORING
+      - job_name: 'api-gateway'
+        static_configs:
+          - targets: ['api-gateway:3000']
+        metrics_path: '/metrics'
+        scrape_interval: 10s
+        scrape_timeout: 5s
+        relabel_configs:
+          - source_labels: [__address__]
+            target_label: __param_target
+          - source_labels: [__param_target]
+            target_label: instance
+          - target_label: __address__
+            replacement: api-gateway:3000
+
+      - job_name: 'auth-service'
+        static_configs:
+          - targets: ['auth-service:3001']
+        metrics_path: '/metrics'
+        scrape_interval: 10s
+        relabel_configs:
+          - source_labels: [__address__]
+            target_label: service
+            replacement: 'auth-service'
+
+      - job_name: 'payment-service'
+        static_configs:
+          - targets: ['payment-service:3002']
+        metrics_path: '/metrics'
+        scrape_interval: 10s
+        relabel_configs:
+          - source_labels: [__address__]
+            target_label: service
+            replacement: 'payment-service'
+
+      - job_name: 'expert-service'
+        static_configs:
+          - targets: ['expert-service:3003']
+        metrics_path: '/metrics'
+        scrape_interval: 10s
+
+      - job_name: 'student-service'
+        static_configs:
+          - targets: ['student-service:3004']
+        metrics_path: '/metrics'
+        scrape_interval: 10s
+
+      - job_name: 'quality-service'
+        static_configs:
+          - targets: ['quality-service:3005']
+        metrics_path: '/metrics'
+        scrape_interval: 10s
+
+      - job_name: 'learning-service'
+        static_configs:
+          - targets: ['learning-service:3006']
+        metrics_path: '/metrics'
+        scrape_interval: 10s
+
+      - job_name: 'training-service'
+        static_configs:
+          - targets: ['training-service:3007']
+        metrics_path: '/metrics'
+        scrape_interval: 10s
+
+      - job_name: 'certification-service'
+        static_configs:
+          - targets: ['certification-service:3008']
+        metrics_path: '/metrics'
+        scrape_interval: 10s
+
+      - job_name: 'analytics-service'
+        static_configs:
+          - targets: ['analytics-service:3009']
+        metrics_path: '/metrics'
+        scrape_interval: 10s
+
+      # 🗄️ DATABASE MONITORING
+      - job_name: 'postgres-exporter'
+        static_configs:
+          - targets: ['postgres-exporter:9187']
+        scrape_interval: 30s
+        metrics_path: '/metrics'
+
+      - job_name: 'redis-exporter'
+        static_configs:
+          - targets: ['redis-exporter:9121']
+        scrape_interval: 30s
+        metrics_path: '/metrics'
+
+      # 🔧 INFRASTRUCTURE MONITORING
+      - job_name: 'node-exporter'
+        static_configs:
+          - targets: ['node-exporter:9100']
+        scrape_interval: 30s
+        metrics_path: '/metrics'
+
+      - job_name: 'kube-state-metrics'
+        static_configs:
+          - targets: ['kube-state-metrics:8080']
+        scrape_interval: 30s
+        metrics_path: '/metrics'
+
+      - job_name: 'cadvisor'
+        static_configs:
+          - targets: ['cadvisor:8080']
+        scrape_interval: 30s
+        metrics_path: '/metrics'
+
+  # 🚨 ALERT RULES
+  alert-rules.yml: |
+    groups:
+      - name: mosa-forge-microservices
+        rules:
+          # 🚀 API GATEWAY ALERTS
+          - alert: APIGatewayHighErrorRate
+            expr: rate(http_requests_total{job="api-gateway", status=~"5.."}[5m]) > 0.05
+            for: 2m
+            labels:
+              severity: critical
+              service: api-gateway
+            annotations:
+              summary: "API Gateway high error rate"
+              description: "API Gateway has high error rate ({{ $value }}). Immediate investigation required."
+
+          - alert: APIGatewayHighLatency
+            expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{job="api-gateway"}[5m])) > 2
+            for: 3m
+            labels:
+              severity: warning
+              service: api-gateway
+            annotations:
+              summary: "API Gateway high latency"
+              description: "API Gateway 95th percentile latency is high ({{ $value }}s)."
+
+          # 💰 PAYMENT SERVICE CRITICAL ALERTS
+          - alert: PaymentServiceDown
+            expr: up{job="payment-service"} == 0
+            for: 1m
+            labels:
+              severity: critical
+              service: payment-service
+            annotations:
+              summary: "Payment service is down"
+              description: "Payment service has been down for more than 1 minute. Revenue impact!"
+
+          - alert: PaymentFailureRateHigh
+            expr: rate(payment_requests_total{job="payment-service", status="failed"}[5m]) > 0.1
+            for: 2m
+            labels:
+              severity: critical
+              service: payment-service
+            annotations:
+              summary: "High payment failure rate"
+              description: "Payment failure rate is {{ $value }}. Immediate investigation required."
+
+          # 🛡️ QUALITY SERVICE ALERTS
+          - alert: QualityScoreDropping
+            expr: deriv(quality_score_average[1h]) < -0.1
+            for: 10m
+            labels:
+              severity: warning
+              service: quality-service
+            annotations:
+              summary: "Platform quality score dropping"
+              description: "Average platform quality score is dropping rapidly."
+
+          # 🎓 LEARNING SERVICE ALERTS
+          - alert: LearningServiceHighErrorRate
+            expr: rate(learning_requests_total{job="learning-service", status=~"5.."}[5m]) > 0.1
+            for: 3m
+            labels:
+              severity: warning
+              service: learning-service
+            annotations:
+              summary: "Learning service high error rate"
+              description: "Learning service error rate is {{ $value }}."
+
+          # 🗄️ DATABASE ALERTS
+          - alert: PostgresHighConnections
+            expr: pg_stat_activity_count > 80
+            for: 5m
+            labels:
+              severity: warning
+              service: postgres
+            annotations:
+              summary: "PostgreSQL high connections"
+              description: "PostgreSQL connection count is high ({{ $value }})."
+
+          - alert: RedisMemoryHigh
+            expr: redis_memory_used_bytes / redis_memory_max_bytes > 0.8
+            for: 5m
+            labels:
+              severity: warning
+              service: redis
+            annotations:
+              summary: "Redis memory usage high"
+              description: "Redis memory usage is {{ $value }}% of maximum."
+
+          # 🔧 INFRASTRUCTURE ALERTS
+          - alert: NodeHighCPU
+            expr: 100 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "High CPU usage on {{ $labels.instance }}"
+              description: "CPU usage is {{ $value }}%."
+
+          - alert: NodeHighMemory
+            expr: (node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) / node_memory_MemTotal_bytes * 100 > 85
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "High memory usage on {{ $labels.instance }}"
+              description: "Memory usage is {{ $value }}%."
+
+          - alert: NodeDiskSpaceLow
+            expr: (node_filesystem_avail_bytes * 100) / node_filesystem_size_bytes < 15
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Low disk space on {{ $labels.instance }}"
+              description: "Disk space is only {{ $value }}% free."
+
+          # 📊 BUSINESS METRICS ALERTS
+          - alert: LowStudentEnrollment
+            expr: student_enrollments_total offset 1d < student_enrollments_total * 0.7
+            for: 1h
+            labels:
+              severity: warning
+            annotations:
+              summary: "Student enrollment dropping"
+              description: "Student enrollment is 30% lower than yesterday."
+
+          - alert: ExpertQualityDecline
+            expr: avg_over_time(expert_quality_score[1h]) < 4.0
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Expert quality score below threshold"
+              description: "Average expert quality score is {{ $value }}."
+
+          - alert: RevenueDropDetected
+            expr: rate(revenue_generated_total[1h]) < 0
+            for: 30m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Revenue decline detected"
+              description: "Revenue generation rate is negative."
+
+  # 📊 GRAFANA DASHBOARDS CONFIG
+  grafana-dashboards.yml: |
+    apiVersion: 1
+
+    providers:
+      - name: 'mosa-forge-dashboards'
+        orgId: 1
+        folder: 'Mosa Forge Enterprise'
+        type: file
+        disableDeletion: false
+        updateIntervalSeconds: 30
+        allowUiUpdates: true
+        options:
+          path: /var/lib/grafana/dashboards
+
+  # 📈 BUSINESS DASHBOARD CONFIG
+  business-dashboard.json: |
+    {
+      "dashboard": {
+        "id": null,
+        "title": "Mosa Forge Business Overview",
+        "tags": ["mosa-forge", "business", "revenue"],
+        "timezone": "Africa/Addis_Ababa",
+        "panels": [
+          {
+            "id": 1,
+            "title": "Revenue Metrics",
+            "type": "stat",
+            "targets": [
+              {
+                "expr": "sum(revenue_generated_total)",
+                "legendFormat": "Total Revenue"
+              }
+            ],
+            "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0}
+          },
+          {
+            "id": 2,
+            "title": "Student Enrollment Rate",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "rate(student_enrollments_total[1h])",
+                "legendFormat": "Enrollment Rate"
+              }
+            ],
+            "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0}
+          }
+        ],
+        "time": {"from": "now-24h", "to": "now"},
+        "refresh": "30s"
+      }
+    }
+
+---
+# 🎯 PROMETHEUS DEPLOYMENT
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: mosa-forge-monitoring
+  labels:
+    app: prometheus
+    component: core
+    platform: mosa-forge
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: prometheus
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: prometheus
+        component: core
+      annotations:
+        prometheus.io/scrape: "false"
+    spec:
+      serviceAccountName: prometheus-service-account
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+      - name: prometheus
+        image: prom/prometheus:v2.45.0
+        imagePullPolicy: IfNotPresent
+        args:
+          - '--config.file=/etc/prometheus/prometheus.yml'
+          - '--storage.tsdb.path=/prometheus'
+          - '--storage.tsdb.retention.time=30d'
+          - '--storage.tsdb.retention.size=50GB'
+          - '--web.console.libraries=/etc/prometheus/console_libraries'
+          - '--web.console.templates=/etc/prometheus/consoles'
+          - '--web.enable-lifecycle'
+          - '--web.enable-admin-api'
+          - '--web.external-url=https://monitoring.mosaforge.com'
+        ports:
+        - name: http
+          containerPort: 9090
+          protocol: TCP
+        resources:
+          requests:
+            memory: "4Gi"
+            cpu: "1000m"
+          limits:
+            memory: "8Gi"
+            cpu: "2000m"
+        livenessProbe:
+          httpGet:
+            path: /-/healthy
+            port: http
+          initialDelaySeconds: 30
+          timeoutSeconds: 10
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /-/ready
+            port: http
+          initialDelaySeconds: 30
+          timeoutSeconds: 10
+          periodSeconds: 10
+        volumeMounts:
+        - name: prometheus-config
+          mountPath: /etc/prometheus
+        - name: prometheus-storage
+          mountPath: /prometheus
+        - name: prometheus-rules
+          mountPath: /etc/prometheus/rules
+      volumes:
+      - name: prometheus-config
+        configMap:
+          name: monitoring-config
+          items:
+          - key: prometheus.yml
+            path: prometheus.yml
+      - name: prometheus-rules
+        configMap:
+          name: monitoring-config
+          items:
+          - key: alert-rules.yml
+            path: alert-rules.yml
+      - name: prometheus-storage
+        persistentVolumeClaim:
+          claimName: prometheus-pvc
+      nodeSelector:
+        node-type: monitoring
+      tolerations:
+      - key: "monitoring"
+        operator: "Equal"
+        value: "true"
+        effect: "NoSchedule"
+
+---
+# 💾 PROMETHEUS STORAGE
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: prometheus-pvc
+  namespace: mosa-forge-monitoring
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: fast-ssd
+  resources:
+    requests:
+      storage: 100Gi
+
+---
+# 🌐 PROMETHEUS SERVICE
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  namespace: mosa-forge-monitoring
+  labels:
+    app: prometheus
+    component: core
+  annotations:
+    prometheus.io/scrape: "false"
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 9090
+    targetPort: http
+    protocol: TCP
+  selector:
+    app: prometheus
+
+---
+# 🚨 ALERTMANAGER DEPLOYMENT
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alertmanager
+  namespace: mosa-forge-monitoring
+  labels:
+    app: alertmanager
+    component: alerting
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: alertmanager
+  template:
+    metadata:
+      labels:
+        app: alertmanager
+        component: alerting
+    spec:
+      containers:
+      - name: alertmanager
+        image: prom/alertmanager:v0.25.0
+        imagePullPolicy: IfNotPresent
+        args:
+          - '--config.file=/etc/alertmanager/alertmanager.yml'
+          - '--storage.path=/alertmanager'
+          - '--cluster.advertise-address=0.0.0.0:9094'
+        ports:
+        - name: http
+          containerPort: 9093
+          protocol: TCP
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "100m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        volumeMounts:
+        - name: alertmanager-config
+          mountPath: /etc/alertmanager
+        - name: alertmanager-storage
+          mountPath: /alertmanager
+        livenessProbe:
+          httpGet:
+            path: /-/healthy
+            port: http
+          initialDelaySeconds: 30
+          timeoutSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /-/ready
+            port: http
+          initialDelaySeconds: 30
+          timeoutSeconds: 10
+      volumes:
+      - name: alertmanager-config
+        configMap:
+          name: alertmanager-config
+      - name: alertmanager-storage
+        emptyDir: {}
+      nodeSelector:
+        node-type: monitoring
+
+---
+# ⚙️ ALERTMANAGER CONFIG
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alertmanager-config
+  namespace: mosa-forge-monitoring
+data:
+  alertmanager.yml: |
+    global:
+      smtp_smarthost: 'smtp.mosaforge.com:587'
+      smtp_from: 'alerts@mosaforge.com'
+      smtp_auth_username: 'alertmanager'
+      smtp_auth_password: '${SMTP_PASSWORD}'
+
+    route:
+      group_by: ['alertname', 'cluster', 'service']
+      group_wait: 10s
+      group_interval: 10s
+      repeat_interval: 1h
+      receiver: 'mosa-forge-team'
+      routes:
+        - match:
+            severity: critical
+          receiver: 'critical-alerts'
+          group_interval: 5s
+          repeat_interval: 5m
+        - match:
+            service: payment-service
+          receiver: 'payment-team'
+          group_interval: 5s
+
+    receivers:
+      - name: 'mosa-forge-team'
+        email_configs:
+          - to: 'devops@mosaforge.com'
+            headers:
+              subject: '[Mosa Forge] Alert: {{ .GroupLabels.alertname }}'
+            body: |
+              Alert: {{ .GroupLabels.alertname }}
+              Service: {{ .GroupLabels.service }}
+              Summary: {{ .CommonAnnotations.summary }}
+              Description: {{ .CommonAnnotations.description }}
+
+              {{ range .Alerts }}
+              Instance: {{ .Labels.instance }}
+              Started: {{ .StartsAt }}
+              {{ end }}
+
+      - name: 'critical-alerts'
+        email_configs:
+          - to: 'critical-alerts@mosaforge.com'
+          - to: 'oumer.muktar@mosaforge.com'
+        slack_configs:
+          - api_url: '${SLACK_WEBHOOK_URL}'
+            channel: '#critical-alerts'
+            title: '🚨 Critical Alert - Mosa Forge'
+            text: '{{ .CommonAnnotations.description }}'
+
+      - name: 'payment-team'
+        email_configs:
+          - to: 'payments-team@mosaforge.com'
+        pagerduty_configs:
+          - routing_key: '${PAGERDUTY_KEY}'
+
+---
+# 📊 GRAFANA DEPLOYMENT
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: mosa-forge-monitoring
+  labels:
+    app: grafana
+    component: visualization
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      labels:
+        app: grafana
+        component: visualization
+    spec:
+      containers:
+      - name: grafana
+        image: grafana/grafana:10.0.0
+        imagePullPolicy: IfNotPresent
+        ports:
+        - name: http
+          containerPort: 3000
+          protocol: TCP
+        env:
+        - name: GF_SECURITY_ADMIN_USER
+          valueFrom:
+            secretKeyRef:
+              name: grafana-secrets
+              key: admin-user
+        - name: GF_SECURITY_ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: grafana-secrets
+              key: admin-password
+        - name: GF_INSTALL_PLUGINS
+          value: "grafana-clock-panel,grafana-simple-json-datasource"
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "200m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        volumeMounts:
+        - name: grafana-storage
+          mountPath: /var/lib/grafana
+        - name: grafana-dashboards
+          mountPath: /var/lib/grafana/dashboards
+        livenessProbe:
+          httpGet:
+            path: /api/health
+            port: http
+          initialDelaySeconds: 60
+          timeoutSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /api/health
+            port: http
+          initialDelaySeconds: 10
+          timeoutSeconds: 5
+      volumes:
+      - name: grafana-storage
+        persistentVolumeClaim:
+          claimName: grafana-pvc
+      - name: grafana-dashboards
+        configMap:
+          name: monitoring-config
+          items:
+          - key: grafana-dashboards.yml
+            path: provider.yaml
+      nodeSelector:
+        node-type: monitoring
+
+---
+# 📈 GRAFANA SERVICE
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: mosa-forge-monitoring
+  labels:
+    app: grafana
+    component: visualization
+spec:
+  type: LoadBalancer
+  ports:
+  - port: 80
+    targetPort: http
+    protocol: TCP
+  selector:
+    app: grafana
+
+---
+# 🔧 NODE EXPORTER DAEMONSET
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: node-exporter
+  namespace: mosa-forge-monitoring
+  labels:
+    app: node-exporter
+    component: infrastructure
+spec:
+  selector:
+    matchLabels:
+      app: node-exporter
+  template:
+    metadata:
+      labels:
+        app: node-exporter
+        component: infrastructure
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9100"
+    spec:
+      containers:
+      - name: node-exporter
+        image: prom/node-exporter:v1.6.0
+        imagePullPolicy: IfNotPresent
+        ports:
+        - name: http
+          containerPort: 9100
+          protocol: TCP
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+        args:
+          - '--path.procfs=/host/proc'
+          - '--path.sysfs=/host/sys'
+          - '--path.rootfs=/host/root'
+          - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+        volumeMounts:
+        - name: proc
+          mountPath: /host/proc
+          readOnly: true
+        - name: sys
+          mountPath: /host/sys
+          readOnly: true
+        - name: root
+          mountPath: /host/root
+          readOnly: true
+      volumes:
+      - name: proc
+        hostPath:
+          path: /proc
+      - name: sys
+        hostPath:
+          path: /sys
+      - name: root
+        hostPath:
+          path: /
+      tolerations:
+      - effect: NoSchedule
+        operator: Exists
+      hostNetwork: true
+      hostPID: true
+
+---
+# 📊 KUBE-STATE-METRICS
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kube-state-metrics
+  namespace: mosa-forge-monitoring
+  labels:
+    app: kube-state-metrics
+    component: kubernetes
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: kube-state-metrics
+  template:
+    metadata:
+      labels:
+        app: kube-state-metrics
+        component: kubernetes
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+    spec:
+      containers:
+      - name: kube-state-metrics
+        image: k8s.gcr.io/kube-state-metrics/kube-state-metrics:v2.9.2
+        imagePullPolicy: IfNotPresent
+        ports:
+        - name: http
+          containerPort: 8080
+          protocol: TCP
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "50m"
+          limits:
+            memory: "256Mi"
+            cpu: "100m"
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          initialDelaySeconds: 5
+          timeoutSeconds: 5
+
+---
+# 🗄️ POSTGRES EXPORTER
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres-exporter
+  namespace: mosa-forge-monitoring
+  labels:
+    app: postgres-exporter
+    component: database
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres-exporter
+  template:
+    metadata:
+      labels:
+        app: postgres-exporter
+        component: database
+    spec:
+      containers:
+      - name: postgres-exporter
+        image: prometheuscommunity/postgres-exporter:v0.12.0
+        imagePullPolicy: IfNotPresent
+        ports:
+        - name: http
+          containerPort: 9187
+          protocol: TCP
+        env:
+        - name: DATA_SOURCE_NAME
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secrets
+              key: connection-string
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+
+---
+# 🔴 REDIS EXPORTER
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis-exporter
+  namespace: mosa-forge-monitoring
+  labels:
+    app: redis-exporter
+    component: cache
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis-exporter
+  template:
+    metadata:
+      labels:
+        app: redis-exporter
+        component: cache
+    spec:
+      containers:
+      - name: redis-exporter
+        image: oliver006/redis_exporter:v1.52.0
+        imagePullPolicy: IfNotPresent
+        ports:
+        - name: http
+          containerPort: 9121
+          protocol: TCP
+        env:
+        - name: REDIS_ADDR
+          value: "redis://redis-service:6379"
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+
+---
+# 🔐 SERVICE ACCOUNTS AND RBAC
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: prometheus-service-account
+  namespace: mosa-forge-monitoring
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: prometheus-cluster-role
+rules:
+- apiGroups: [""]
+  resources:
+  - nodes
+  - nodes/proxy
+  - services
+  - endpoints
+  - pods
+  verbs: ["get", "list", "watch"]
+- apiGroups:
+  - extensions
+  resources:
+  - ingresses
+  verbs: ["get", "list", "watch"]
+- nonResourceURLs: ["/metrics"]
+  verbs: ["get"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: prometheus-cluster-role-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: prometheus-cluster-role
+subjects:
+- kind: ServiceAccount
+  name: prometheus-service-account
+  namespace: mosa-forge-monitoring
+
+---
+# 🏷️ NODE SELECTOR FOR MONITORING NODES
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: monitoring-node-config
+  namespace: mosa-forge-monitoring
+data:
+  node-labels.sh: |
+    #!/bin/bash
+    kubectl label nodes <monitoring-node> node-type=monitoring
+    kubectl taint nodes <monitoring-node> monitoring=true:NoSchedule
+
+---
+# 📝 MONITORING STACK NOTES
+
+# 🎯 DEPLOYMENT COMMANDS:
+# kubectl create namespace mosa-forge-monitoring
+# kubectl apply -f monitoring-stack.yml
+
+# 🔧 CUSTOM METRICS TO IMPLEMENT:
+# - student_enrollments_total
+# - revenue_generated_total  
+# - expert_quality_score
+# - payment_requests_total
+# - learning_requests_total
+# - quality_score_average
+
+# 📊 DASHBOARDS INCLUDED:
+# 1. Business Overview - Revenue, enrollments, quality scores
+# 2. Microservices Health - API performance, error rates
+# 3. Infrastructure - CPU, memory, disk, network
+# 4. Database Performance - Query times, connections
+# 5. Payment Analytics - Success rates, revenue trends
+
+# 🚨 ALERT CHANNELS:
+# - Email (critical alerts to Oumer Muktar)
+# - Slack (#critical-alerts channel)
+# - PagerDuty (payment service only)
+# - SMS (future implementation)
+
+# 💾 STORAGE REQUIREMENTS:
+# - Prometheus: 100GB SSD
+# - Grafana: 20GB SSD
+# - AlertManager: 5GB
+
+# 🔐 SECURITY NOTES:
+# - All monitoring endpoints require authentication
+# - Grafana uses strong admin passwords
+# - AlertManager SMTP credentials secured in secrets
+# - Network policies restrict access to monitoring namespaces

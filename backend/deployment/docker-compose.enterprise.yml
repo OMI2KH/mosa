@@ -1,0 +1,1031 @@
+# 🎯 MOSA FORGE: Enterprise Docker Compose Configuration
+# 
+# 🏗️ PRODUCTION MICROSERVICES ORCHESTRATION
+# 📦 Complete Enterprise Stack with Scaling, Monitoring & Security
+# 🔧 Optimized for Ethiopian Infrastructure & High Availability
+# 
+# @author Oumer Muktar | Powered by Chereka
+# @version Enterprise 1.0
+
+version: '3.8'
+
+# 🏗️ ENTERPRISE NETWORK ARCHITECTURE
+networks:
+  mosa-enterprise:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.10.0.0/16
+    attachable: true
+  
+  mosa-internal:
+    driver: bridge
+    internal: true
+    ipam:
+      config:
+        - subnet: 10.20.0.0/16
+  
+  mosa-monitoring:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.30.0.0/16
+
+# 🏗️ DISTRIBUTED VOLUMES FOR DATA PERSISTENCE
+volumes:
+  postgres-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /mnt/mosa/postgres
+  
+  redis-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /mnt/mosa/redis
+  
+  mongodb-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /mnt/mosa/mongodb
+  
+  elasticsearch-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /mnt/mosa/elasticsearch
+  
+  certificates:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /mnt/mosa/certificates
+  
+  uploads:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /mnt/mosa/uploads
+  
+  logs:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /var/log/mosa
+
+# 🏗️ ENTERPRISE CONFIGURATION SECRETS
+secrets:
+  postgres_password:
+    file: ./secrets/postgres_password.txt
+  redis_password:
+    file: ./secrets/redis_password.txt
+  jwt_secret:
+    file: ./secrets/jwt_secret.txt
+  telebirr_api_key:
+    file: ./secrets/telebirr_api_key.txt
+  cbe_birr_api_key:
+    file: ./secrets/cbe_birr_api_key.txt
+  fayda_api_secret:
+    file: ./secrets/fayda_api_secret.txt
+
+# 🚀 CORE MICROSERVICES ORCHESTRATION
+services:
+  # 🏗️ LOAD BALANCER & API GATEWAY
+  api-gateway:
+    build:
+      context: ./api-gateway
+      dockerfile: Dockerfile.production
+      args:
+        NODE_ENV: production
+    image: mosa-forge/api-gateway:enterprise-1.0
+    container_name: mosa-api-gateway
+    hostname: api-gateway
+    
+    # 🎯 PRODUCTION SCALING
+    deploy:
+      replicas: 3
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1.0'
+        reservations:
+          memory: 512M
+          cpus: '0.5'
+      restart_policy:
+        condition: any
+        delay: 5s
+        max_attempts: 3
+        window: 120s
+      update_config:
+        parallelism: 1
+        delay: 30s
+        order: start-first
+    
+    ports:
+      - "443:443"   # HTTPS Production
+      - "80:80"     # HTTP Redirect
+    
+    networks:
+      mosa-enterprise:
+        aliases:
+          - gateway.mosa.internal
+    
+    volumes:
+      - ./ssl/certificates:/etc/nginx/ssl:ro
+      - ./api-gateway/nginx.conf:/etc/nginx/nginx.conf:ro
+      - logs:/var/log/nginx
+    
+    environment:
+      - NODE_ENV=production
+      - PORT=443
+      - SSL_CERT_PATH=/etc/nginx/ssl/mosaforge.com.crt
+      - SSL_KEY_PATH=/etc/nginx/ssl/mosaforge.com.key
+      - REDIS_HOST=redis-cluster
+      - REDIS_PORT=6379
+      - JWT_SECRET_FILE=/run/secrets/jwt_secret
+      - RATE_LIMIT_WINDOW=900000
+      - RATE_LIMIT_MAX=1000
+    
+    secrets:
+      - jwt_secret
+    
+    depends_on:
+      redis-cluster:
+        condition: service_healthy
+      auth-service:
+        condition: service_healthy
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:443/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # 🔐 AUTHENTICATION SERVICE
+  auth-service:
+    build:
+      context: ./auth-service
+      dockerfile: Dockerfile.production
+      args:
+        NODE_ENV: production
+    image: mosa-forge/auth-service:enterprise-1.0
+    container_name: mosa-auth-service
+    hostname: auth-service
+    
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
+    
+    networks:
+      - mosa-enterprise
+      - mosa-internal
+    
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://mosa_user:${POSTGRES_PASSWORD}@postgres-primary:5432/mosa_enterprise
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis-cluster:6379/0
+      - JWT_SECRET_FILE=/run/secrets/jwt_secret
+      - FAYDA_API_URL=https://api.fayda.gov.et/v1
+      - FAYDA_API_SECRET_FILE=/run/secrets/fayda_api_secret
+      - OTP_EXPIRY=300000
+      - MAX_LOGIN_ATTEMPTS=5
+      - ACCOUNT_LOCKOUT_TIME=900000
+    
+    secrets:
+      - jwt_secret
+      - fayda_api_secret
+    
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+      redis-cluster:
+        condition: service_healthy
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # 💰 PAYMENT SERVICE
+  payment-service:
+    build:
+      context: ./payment-service
+      dockerfile: Dockerfile.production
+    image: mosa-forge/payment-service:enterprise-1.0
+    container_name: mosa-payment-service
+    hostname: payment-service
+    
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          memory: 768M
+          cpus: '0.75'
+        reservations:
+          memory: 512M
+          cpus: '0.5'
+    
+    networks:
+      - mosa-enterprise
+      - mosa-internal
+    
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://mosa_user:${POSTGRES_PASSWORD}@postgres-primary:5432/mosa_enterprise
+      - TELEBIRR_API_URL=https://api.telebirr.com/v1
+      - CBE_BIRR_API_URL=https://api.cbebirr.com/v1
+      - BUNDLE_PRICE=1999
+      - MOSA_REVENUE=1000
+      - EXPERT_REVENUE=999
+      - PAYOUT_SCHEDULE=333,333,333
+      - QUALITY_BONUS_MAX=0.2
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis-cluster:6379/1
+    
+    secrets:
+      - telebirr_api_key
+      - cbe_birr_api_key
+    
+    volumes:
+      - ./payment-service/ssl:/app/ssl:ro
+    
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+      redis-cluster:
+        condition: service_healthy
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # 👨‍🏫 EXPERT SERVICE
+  expert-service:
+    build:
+      context: ./expert-service
+      dockerfile: Dockerfile.production
+    image: mosa-forge/expert-service:enterprise-1.0
+    container_name: mosa-expert-service
+    hostname: expert-service
+    
+    deploy:
+      replicas: 3
+      resources:
+        limits:
+          memory: 768M
+          cpus: '0.75'
+        reservations:
+          memory: 512M
+          cpus: '0.5'
+    
+    networks:
+      - mosa-enterprise
+      - mosa-internal
+    
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://mosa_user:${POSTGRES_PASSWORD}@postgres-primary:5432/mosa_enterprise
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis-cluster:6379/2
+      - QUALITY_THRESHOLD=4.0
+      - MAX_STUDENTS_MASTER=999999
+      - MAX_STUDENTS_SENIOR=100
+      - MAX_STUDENTS_STANDARD=50
+      - BASE_EARNINGS=999
+      - MASTER_BONUS=0.2
+      - SENIOR_BONUS=0.1
+    
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+      redis-cluster:
+        condition: service_healthy
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3003/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # 🎓 STUDENT SERVICE
+  student-service:
+    build:
+      context: ./student-service
+      dockerfile: Dockerfile.production
+    image: mosa-forge/student-service:enterprise-1.0
+    container_name: mosa-student-service
+    hostname: student-service
+    
+    deploy:
+      replicas: 3
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1.0'
+        reservations:
+          memory: 768M
+          cpus: '0.75'
+    
+    networks:
+      - mosa-enterprise
+      - mosa-internal
+    
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://mosa_user:${POSTGRES_PASSWORD}@postgres-primary:5432/mosa_enterprise
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis-cluster:6379/3
+      - COURSE_DURATION_DAYS=120
+      - MINDSET_DURATION_DAYS=28
+      - THEORY_DURATION_DAYS=60
+      - HANDS_ON_DURATION_DAYS=60
+      - MAX_CONCURRENT_COURSES=3
+    
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+      redis-cluster:
+        condition: service_healthy
+      expert-service:
+        condition: service_healthy
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3004/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # 🛡️ QUALITY SERVICE
+  quality-service:
+    build:
+      context: ./quality-service
+      dockerfile: Dockerfile.production
+    image: mosa-forge/quality-service:enterprise-1.0
+    container_name: mosa-quality-service
+    hostname: quality-service
+    
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1.0'
+        reservations:
+          memory: 512M
+          cpus: '0.5'
+    
+    networks:
+      - mosa-enterprise
+      - mosa-internal
+    
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://mosa_user:${POSTGRES_PASSWORD}@postgres-primary:5432/mosa_enterprise
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis-cluster:6379/4
+      - QUALITY_CHECK_INTERVAL=3600000
+      - AUTO_ENFORCEMENT_ENABLED=true
+      - MIN_COMPLETION_RATE=0.7
+      - MIN_AVERAGE_RATING=4.0
+      - MAX_RESPONSE_TIME=24
+    
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+      redis-cluster:
+        condition: service_healthy
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3005/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # 📚 LEARNING SERVICE
+  learning-service:
+    build:
+      context: ./learning-service
+      dockerfile: Dockerfile.production
+    image: mosa-forge/learning-service:enterprise-1.0
+    container_name: mosa-learning-service
+    hostname: learning-service
+    
+    deploy:
+      replicas: 4
+      resources:
+        limits:
+          memory: 2G
+          cpus: '1.5'
+        reservations:
+          memory: 1G
+          cpus: '1.0'
+    
+    networks:
+      - mosa-enterprise
+      - mosa-internal
+    
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://mosa_user:${POSTGRES_PASSWORD}@postgres-primary:5432/mosa_enterprise
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis-cluster:6379/5
+      - EXERCISE_CACHE_TTL=3600
+      - REAL_TIME_CHART_ENABLED=true
+      - PROGRESS_TRACKING_ENABLED=true
+      - MAX_EXERCISES_PER_DAY=20
+    
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+      redis-cluster:
+        condition: service_healthy
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3006/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # 🏋️ TRAINING SERVICE
+  training-service:
+    build:
+      context: ./training-service
+      dockerfile: Dockerfile.production
+    image: mosa-forge/training-service:enterprise-1.0
+    container_name: mosa-training-service
+    hostname: training-service
+    
+    deploy:
+      replicas: 3
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1.0'
+        reservations:
+          memory: 768M
+          cpus: '0.75'
+    
+    networks:
+      - mosa-enterprise
+      - mosa-internal
+    
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://mosa_user:${POSTGRES_PASSWORD}@postgres-primary:5432/mosa_enterprise
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis-cluster:6379/6
+      - MAX_SESSION_SIZE=5
+      - SESSION_DURATION=120
+      - ATTENDANCE_THRESHOLD=0.8
+    
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+      redis-cluster:
+        condition: service_healthy
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3007/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # 🏆 CERTIFICATION SERVICE
+  certification-service:
+    build:
+      context: ./certification-service
+      dockerfile: Dockerfile.production
+    image: mosa-forge/certification-service:enterprise-1.0
+    container_name: mosa-certification-service
+    hostname: certification-service
+    
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          memory: 768M
+          cpus: '0.75'
+        reservations:
+          memory: 512M
+          cpus: '0.5'
+    
+    networks:
+      - mosa-enterprise
+      - mosa-internal
+    
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://mosa_user:${POSTGRES_PASSWORD}@postgres-primary:5432/mosa_enterprise
+      - YACHI_API_URL=https://api.yachi.com/v1
+      - CERTIFICATE_TEMPLATE_PATH=/app/templates
+      - VERIFICATION_ENABLED=true
+      - EMPLOYER_PORTAL_ENABLED=true
+    
+    volumes:
+      - ./certification-service/templates:/app/templates:ro
+    
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3008/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # 📊 ANALYTICS SERVICE
+  analytics-service:
+    build:
+      context: ./analytics-service
+      dockerfile: Dockerfile.production
+    image: mosa-forge/analytics-service:enterprise-1.0
+    container_name: mosa-analytics-service
+    hostname: analytics-service
+    
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          memory: 2G
+          cpus: '1.5'
+        reservations:
+          memory: 1G
+          cpus: '1.0'
+    
+    networks:
+      - mosa-enterprise
+      - mosa-internal
+    
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://mosa_user:${POSTGRES_PASSWORD}@postgres-primary:5432/mosa_enterprise
+      - MONGODB_URL=mongodb://mosa_user:${MONGODB_PASSWORD}@mongodb:27017/mosa_analytics
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis-cluster:6379/7
+      - ANALYTICS_INTERVAL=3600000
+      - REPORT_GENERATION_ENABLED=true
+    
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+      redis-cluster:
+        condition: service_healthy
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3009/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # 🗃️ PRIMARY DATABASE - POSTGRESQL CLUSTER
+  postgres-primary:
+    image: postgres:15-alpine
+    container_name: mosa-postgres-primary
+    hostname: postgres-primary
+    
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          memory: 4G
+          cpus: '2.0'
+        reservations:
+          memory: 2G
+          cpus: '1.0'
+    
+    networks:
+      - mosa-internal
+    
+    environment:
+      - POSTGRES_DB=mosa_enterprise
+      - POSTGRES_USER=mosa_user
+      - POSTGRES_PASSWORD_FILE=/run/secrets/postgres_password
+      - POSTGRES_INITDB_ARGS=--encoding=UTF8 --locale=C
+      - PGDATA=/var/lib/postgresql/data/pgdata
+    
+    secrets:
+      - postgres_password
+    
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./database/init-scripts:/docker-entrypoint-initdb.d:ro
+      - ./database/backups:/backups
+    
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mosa_user -d mosa_enterprise"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # 🗃️ DATABASE REPLICA - READ SCALING
+  postgres-replica:
+    image: postgres:15-alpine
+    container_name: mosa-postgres-replica
+    hostname: postgres-replica
+    
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          memory: 2G
+          cpus: '1.0'
+        reservations:
+          memory: 1G
+          cpus: '0.5'
+    
+    networks:
+      - mosa-internal
+    
+    environment:
+      - POSTGRES_DB=mosa_enterprise
+      - POSTGRES_USER=mosa_user
+      - POSTGRES_PASSWORD_FILE=/run/secrets/postgres_password
+      - POSTGRES_INITDB_ARGS=--encoding=UTF8 --locale=C
+    
+    secrets:
+      - postgres_password
+    
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+    
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mosa_user -d mosa_enterprise"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # 🔥 REDIS CLUSTER - CACHING & SESSIONS
+  redis-cluster:
+    image: redis:7-alpine
+    container_name: mosa-redis-cluster
+    hostname: redis-cluster
+    command: >
+      redis-server
+      --requirepass /run/secrets/redis_password
+      --appendonly yes
+      --cluster-enabled yes
+      --cluster-config-file nodes.conf
+      --cluster-node-timeout 5000
+    
+    deploy:
+      replicas: 3
+      resources:
+        limits:
+          memory: 1G
+          cpus: '0.5'
+        reservations:
+          memory: 512M
+          cpus: '0.25'
+    
+    networks:
+      - mosa-enterprise
+      - mosa-internal
+    
+    secrets:
+      - redis_password
+    
+    volumes:
+      - redis-data:/data
+      - ./redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
+    
+    healthcheck:
+      test: ["CMD", "redis-cli", "--pass", "$$(cat /run/secrets/redis_password)", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # 📈 MONGODB - ANALYTICS DATA
+  mongodb:
+    image: mongo:6
+    container_name: mosa-mongodb
+    hostname: mongodb
+    
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          memory: 2G
+          cpus: '1.0'
+        reservations:
+          memory: 1G
+          cpus: '0.5'
+    
+    networks:
+      - mosa-internal
+    
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=mosa_user
+      - MONGO_INITDB_ROOT_PASSWORD_FILE=/run/secrets/mongodb_password
+      - MONGO_INITDB_DATABASE=mosa_analytics
+    
+    volumes:
+      - mongodb-data:/data/db
+      - ./mongodb/init-scripts:/docker-entrypoint-initdb.d:ro
+    
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # 🔍 ELASTICSEARCH - LOGGING & SEARCH
+  elasticsearch:
+    image: elasticsearch:8.8.0
+    container_name: mosa-elasticsearch
+    hostname: elasticsearch
+    
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          memory: 2G
+          cpus: '1.0'
+        reservations:
+          memory: 1G
+          cpus: '0.5'
+    
+    networks:
+      - mosa-monitoring
+    
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms1g -Xmx1g"
+      - cluster.name=mosa-monitoring
+    
+    volumes:
+      - elasticsearch-data:/usr/share/elasticsearch/data
+    
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9200"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+
+  # 📊 KIBANA - LOG VISUALIZATION
+  kibana:
+    image: kibana:8.8.0
+    container_name: mosa-kibana
+    hostname: kibana
+    
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          memory: 1G
+          cpus: '0.5'
+        reservations:
+          memory: 512M
+          cpus: '0.25'
+    
+    networks:
+      - mosa-monitoring
+    
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    
+    ports:
+      - "5601:5601"
+    
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5601/api/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+
+  # 📈 PROMETHEUS - METRICS COLLECTION
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: mosa-prometheus
+    hostname: prometheus
+    
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          memory: 2G
+          cpus: '1.0'
+        reservations:
+          memory: 1G
+          cpus: '0.5'
+    
+    networks:
+      - mosa-monitoring
+    
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.enable-lifecycle'
+    
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    
+    ports:
+      - "9090:9090"
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # 📊 GRAFANA - DASHBOARDS & VISUALIZATION
+  grafana:
+    image: grafana/grafana:latest
+    container_name: mosa-grafana
+    hostname: grafana
+    
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          memory: 1G
+          cpus: '0.5'
+        reservations:
+          memory: 512M
+          cpus: '0.25'
+    
+    networks:
+      - mosa-monitoring
+    
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_INSTALL_PLUGINS=grafana-clock-panel,grafana-simple-json-datasource
+    
+    volumes:
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
+      - grafana-data:/var/lib/grafana
+    
+    ports:
+      - "3000:3000"
+    
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # 🚀 REACT NATIVE MOBILE APP SERVER
+  mobile-app:
+    build:
+      context: ./mobile-app
+      dockerfile: Dockerfile.production
+    image: mosa-forge/mobile-app:enterprise-1.0
+    container_name: mosa-mobile-app
+    hostname: mobile-app
+    
+    deploy:
+      replicas: 3
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1.0'
+        reservations:
+          memory: 512M
+          cpus: '0.5'
+    
+    networks:
+      - mosa-enterprise
+    
+    environment:
+      - NODE_ENV=production
+      - EXPO_API_URL=https://api.mosaforge.com
+      - PUSH_NOTIFICATIONS_ENABLED=true
+      - OFFLINE_SUPPORT_ENABLED=true
+    
+    ports:
+      - "8080:8080"
+    
+    depends_on:
+      api-gateway:
+        condition: service_healthy
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # 🔧 ADMIN DASHBOARD
+  admin-dashboard:
+    build:
+      context: ./admin-dashboard
+      dockerfile: Dockerfile.production
+    image: mosa-forge/admin-dashboard:enterprise-1.0
+    container_name: mosa-admin-dashboard
+    hostname: admin-dashboard
+    
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1.0'
+        reservations:
+          memory: 512M
+          cpus: '0.5'
+    
+    networks:
+      - mosa-enterprise
+    
+    environment:
+      - NODE_ENV=production
+      - API_BASE_URL=https://api.mosaforge.com
+      - ADMIN_API_KEY=${ADMIN_API_KEY}
+    
+    ports:
+      - "8081:8081"
+    
+    depends_on:
+      api-gateway:
+        condition: service_healthy
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+# 🏗️ ENTERPRISE DEPLOYMENT CONFIGURATION
+x-deploy: &default-deploy
+  placement:
+    constraints:
+      - node.role == worker
+  update_config:
+    parallelism: 1
+    delay: 30s
+    order: start-first
+  rollback_config:
+    parallelism: 1
+    delay: 10s
+    order: stop-first
+  restart_policy:
+    condition: any
+    delay: 5s
+    max_attempts: 3
+    window: 120s
+
+# 🎯 ENVIRONMENT VARIABLES CONFIGURATION
+x-environment: &default-environment
+  NODE_ENV: production
+  LOG_LEVEL: info
+  TZ: Africa/Addis_Ababa
+  AWS_REGION: eu-central-1
+  ETHIOPIA_TIMEZONE: EAT
