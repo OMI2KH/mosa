@@ -569,7 +569,7 @@ docker-compose up -d
 
 ### **Enterprise Support**
 - **Email**: enterprise@mosaforge.com
-- **Phone**: +251 XXX XXX XXX
+- **Phone**: +251 901 862 465
 - **Address**: Addis Ababa, Ethiopia
 - **Website**: https://mosaforge.com
 
