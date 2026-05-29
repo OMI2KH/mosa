@@ -1,0 +1,529 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ==================== USER MODELS ====================
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  phone     String   @unique
+  password  String
+  firstName String
+  lastName  String
+  role      UserRole @default(STUDENT)
+  
+  // Profile info
+  faydaId   String?  @unique
+  profileImage String?
+  bio       String?
+  dateOfBirth DateTime?
+  
+  // Account status
+  isVerified Boolean @default(false)
+  isActive   Boolean @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  // Relations
+  student    Student?
+  expert     Expert?
+  enrollments Enrollment[]
+  ratings    Rating[]
+  transactions Transaction[]
+
+  @@index([email])
+  @@index([phone])
+}
+
+enum UserRole {
+  STUDENT
+  EXPERT
+  ADMIN
+}
+
+// ==================== STUDENT MODELS ====================
+
+model Student {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Learning progress
+  totalEnrollments Int @default(0)
+  completedCourses Int @default(0)
+  averageRating    Float @default(0)
+  
+  // Mindset phase
+  mindsetPhaseCompleted Boolean @default(false)
+  mindsetPhaseStartedAt DateTime?
+  mindsetPhaseCompletedAt DateTime?
+  
+  // Preferences
+  preferredSkills String[] @default([])
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  enrollments Enrollment[]
+  payments    Payment[]
+  refunds     Refund[]
+
+  @@index([userId])
+}
+
+// ==================== EXPERT MODELS ====================
+
+model Expert {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Expertise
+  skills    String[] // Array of skill names from 40 enterprise skills
+  certifications String[] @default([])
+  portfolioUrl String?
+  
+  // Quality metrics
+  tier      ExpertTier @default(STANDARD)
+  qualityScore Float @default(4.0)
+  completionRate Float @default(0) // percentage
+  studentSatisfaction Float @default(0) // percentage
+  weeklyProgressRate Float @default(0) // percentage
+  
+  // Capacity management
+  studentLimit Int @default(50)
+  currentStudents Int @default(0)
+  autoEnrollmentPaused Boolean @default(false)
+  pauseReason String?
+  
+  // Earnings
+  totalEarnings Float @default(0)
+  pendingEarnings Float @default(0)
+  
+  // Verification
+  portfolioVerified Boolean @default(false)
+  faydaVerified Boolean @default(false)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  enrollments Enrollment[]
+  sessions    TrainingSession[]
+  ratings     Rating[]
+  payments    Payment[]
+  qualityRecords QualityRecord[]
+
+  @@index([userId])
+  @@index([tier])
+}
+
+enum ExpertTier {
+  PROBATION    // <3.5 rating, -20% bonus, 10 student limit
+  DEVELOPING   // 3.5+ rating, -10% bonus, 25 student limit
+  STANDARD     // 4.0+ rating, base 999 ETB, 50 student limit
+  SENIOR       // 4.3+ rating, +10% bonus, 100 student limit
+  MASTER       // 4.7+ rating, +20% bonus, unlimited
+}
+
+// ==================== COURSE & SKILLS MODELS ====================
+
+model Course {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  description String
+  duration  Int      // in days
+  phases    CoursePhase[] // Mindset, Theory, Hands-on, Certification
+  
+  // Pricing
+  priceETB  Float @default(1999)
+  
+  // Capacity
+  maxEnrollments Int?
+  currentEnrollments Int @default(0)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  enrollments Enrollment[]
+
+  @@index([name])
+}
+
+model CoursePhase {
+  id        String   @id @default(cuid())
+  courseId  String
+  course    Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  
+  name      String   // "Mindset Foundation", "Theory Mastery", "Hands-on", "Certification"
+  description String
+  durationDays Int
+  order     Int      // 1, 2, 3, 4
+  
+  // Phase-specific settings
+  isRequired Boolean @default(true)
+  isFree     Boolean @default(false) // Mindset phase is free
+  
+  createdAt DateTime @default(now())
+
+  @@unique([courseId, order])
+  @@index([courseId])
+}
+
+// ==================== ENROLLMENT MODELS ====================
+
+model Enrollment {
+  id        String   @id @default(cuid())
+  studentId String
+  student   Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  
+  expertId  String
+  expert    Expert   @relation(fields: [expertId], references: [id], onDelete: SetNull)
+  
+  courseId  String
+  course    Course   @relation(fields: [courseId], references: [id])
+  
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  
+  // Enrollment status
+  status    EnrollmentStatus @default(ACTIVE)
+  
+  // Progress tracking
+  currentPhase Int @default(1) // 1-4
+  phaseProgress Float @default(0) // percentage
+  overallProgress Float @default(0) // percentage
+  
+  // Cooling period (7 days for full refund)
+  coolingPeriodEndsAt DateTime?
+  coolingPeriodUsed Boolean @default(false)
+  
+  // Dates
+  enrolledAt DateTime @default(now())
+  startedAt  DateTime?
+  completedAt DateTime?
+  
+  // Expert switching
+  originalExpertId String?
+  expertSwitchCount Int @default(0)
+  lastExpertSwitchAt DateTime?
+  
+  // Payment tracking
+  payment    Payment?
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([studentId, courseId])
+  @@index([studentId])
+  @@index([expertId])
+  @@index([courseId])
+  @@index([status])
+}
+
+enum EnrollmentStatus {
+  ACTIVE           // Currently enrolled
+  COMPLETED        // Successfully completed
+  DROPPED          // Student dropped
+  PAUSED           // Temporarily paused
+  CANCELLED        // Cancelled with refund
+}
+
+// ==================== TRAINING SESSION MODELS ====================
+
+model TrainingSession {
+  id        String   @id @default(cuid())
+  expertId  String
+  expert    Expert   @relation(fields: [expertId], references: [id])
+  
+  enrollmentId String
+  
+  // Session details
+  title     String
+  description String?
+  scheduledAt DateTime
+  duration  Int      // in minutes
+  
+  // Attendance
+  status    SessionStatus @default(SCHEDULED)
+  studentsEnrolled Int @default(0) // max 5 per session
+  
+  // Meeting details
+  meetingUrl String?
+  recordingUrl String?
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([expertId])
+  @@index([scheduledAt])
+}
+
+enum SessionStatus {
+  SCHEDULED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+// ==================== QUALITY MODELS ====================
+
+model QualityRecord {
+  id        String   @id @default(cuid())
+  expertId  String
+  expert    Expert   @relation(fields: [expertId], references: [id])
+  
+  // Metrics snapshot
+  completionRate Float
+  averageRating Float
+  responseTime Int? // in hours
+  weeklyProgress Float
+  studentSatisfaction Float
+  
+  // Actions taken
+  action    QualityAction
+  reason    String
+  
+  // Tier change info
+  previousTier ExpertTier?
+  newTier ExpertTier?
+  bonusAdjustment Float? // percentage change
+  
+  createdAt DateTime @default(now())
+
+  @@index([expertId])
+  @@index([createdAt])
+}
+
+enum QualityAction {
+  TIER_PROMOTED
+  TIER_DEMOTED
+  ENROLLMENT_PAUSED
+  ENROLLMENT_RESUMED
+  BONUS_APPLIED
+  PENALTY_APPLIED
+  PROBATION_INITIATED
+}
+
+model Rating {
+  id        String   @id @default(cuid())
+  
+  expertId  String
+  expert    Expert   @relation(fields: [expertId], references: [id])
+  
+  studentId String
+  student   Student  @relation(fields: [studentId], references: [id])
+  
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  
+  // Rating details
+  score     Int      // 1-5
+  comment   String?
+  
+  createdAt DateTime @default(now())
+
+  @@unique([expertId, studentId])
+  @@index([expertId])
+  @@index([studentId])
+}
+
+// ==================== PAYMENT MODELS ====================
+
+model Payment {
+  id        String   @id @default(cuid())
+  enrollmentId String @unique
+  enrollment Enrollment @relation(fields: [enrollmentId], references: [id])
+  
+  studentId String
+  student   Student  @relation(fields: [studentId], references: [id])
+  
+  // Payment info
+  amountETB Float    // 1999 ETB
+  status    PaymentStatus @default(PENDING)
+  
+  // Payment method
+  paymentMethod PaymentMethod
+  transactionId String?
+  
+  // Split tracking
+  mosaShare Float @default(1000) // 1000 ETB (50.03%)
+  expertShare Float @default(999) // 999 ETB (49.97%)
+  
+  // Expert payout schedule (333/333/333)
+  payoutSchedule PayoutSchedule[]
+  
+  // Verification
+  verificationToken String?
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([studentId])
+  @@index([status])
+}
+
+enum PaymentStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  REFUNDED
+}
+
+enum PaymentMethod {
+  TELEBIRR
+  CBE_BIRR
+  BANK_TRANSFER
+}
+
+model PayoutSchedule {
+  id        String   @id @default(cuid())
+  paymentId String
+  payment   Payment  @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  
+  // Payout info
+  amount    Float    @default(333) // ETB
+  stage     PayoutStage
+  dueDate   DateTime
+  paidAt    DateTime?
+  status    PayoutStatus @default(PENDING)
+  
+  createdAt DateTime @default(now())
+
+  @@index([paymentId])
+  @@index([dueDate])
+}
+
+enum PayoutStage {
+  UPFRONT      // Course start
+  MILESTONE    // 75% completion
+  COMPLETION   // Certification
+}
+
+enum PayoutStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+// ==================== REFUND MODELS ====================
+
+model Refund {
+  id        String   @id @default(cuid())
+  studentId String
+  student   Student  @relation(fields: [studentId], references: [id])
+  
+  enrollmentId String
+  paymentId    String
+  
+  // Refund details
+  amount    Float
+  reason    RefundReason
+  status    RefundStatus @default(PENDING)
+  
+  // Prorated calculation
+  completionPercent Float @default(0)
+  
+  createdAt DateTime @default(now())
+  processedAt DateTime?
+
+  @@index([studentId])
+}
+
+enum RefundReason {
+  COOLING_PERIOD
+  QUALITY_ISSUE
+  EXPERT_SWITCH
+  STUDENT_REQUEST
+}
+
+enum RefundStatus {
+  PENDING
+  APPROVED
+  PROCESSING
+  COMPLETED
+  REJECTED
+}
+
+// ==================== TRANSACTION MODELS ====================
+
+model Transaction {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  
+  // Transaction info
+  type      TransactionType
+  amount    Float
+  currency  String   @default("ETB")
+  
+  // External reference
+  externalId String?
+  provider  String   // "telebirr", "cbe_birr", "stripe"
+  
+  // Status
+  status    TransactionStatus @default(PENDING)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([type])
+}
+
+enum TransactionType {
+  ENROLLMENT_PAYMENT
+  EXPERT_PAYOUT
+  REFUND
+  BONUS
+  PENALTY
+}
+
+enum TransactionStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+// ==================== CERTIFICATION MODELS ====================
+
+model Certificate {
+  id        String   @id @default(cuid())
+  enrollmentId String @unique
+  
+  studentId String
+  expertId  String
+  
+  // Certificate details
+  certificateNumber String @unique
+  issuedAt  DateTime @default(now())
+  expiresAt DateTime?
+  
+  // Yachi integration
+  yachiVerified Boolean @default(false)
+  yachiProviderId String?
+  yachiVerifiedAt DateTime?
+  
+  // File
+  pdfUrl    String?
+  
+  createdAt DateTime @default(now())
+
+  @@index([studentId])
+  @@index([yachiVerified])
+}
